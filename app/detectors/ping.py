@@ -37,15 +37,12 @@ async def run_ping_check(
         count=count,
         timeout_seconds=timeout_seconds,
     )
-    if error:
-        return PingResult(error=error)
-
-    assert output is not None
+    output_text = output or ""
     latencies: list[float] = []
     states: list[NodeState] = []
     regions: list[str] = []
 
-    for line in output.splitlines():
+    for line in output_text.splitlines():
         if "pong" not in line.lower() or "via" not in line.lower():
             continue
         match = PONG_RE.search(line)
@@ -65,8 +62,8 @@ async def run_ping_check(
     if received == 0:
         return PingResult(
             packet_loss_pct=100.0,
-            raw_output=output,
-            error="No pong responses parsed from tailscale ping output",
+            raw_output=output_text or None,
+            error=error or "No pong responses parsed from tailscale ping output",
         )
 
     sent = max(count, received)
@@ -86,5 +83,6 @@ async def run_ping_check(
         max_ms=max(latencies),
         packet_loss_pct=packet_loss,
         derp_region=dominant_region,
-        raw_output=output,
+        raw_output=output_text,
+        error=error,
     )

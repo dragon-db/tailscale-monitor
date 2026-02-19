@@ -33,6 +33,8 @@ class MonitorService:
             self.runtime.setdefault(node.ip, NodeRuntimeState())
 
     async def run_check(self, node: NodeConfig, reason: str = "scheduled") -> CheckResult:
+        runtime = self.runtime[node.ip]
+
         status_result = await get_node_status(
             tailscale_binary=self.config.settings.tailscale_binary,
             tailscale_socket=self.config.settings.tailscale_socket,
@@ -66,6 +68,10 @@ class MonitorService:
         if derp_suspected:
             if ping_result.state in {NodeState.DERP, NodeState.DIRECT, NodeState.PEER_RELAY}:
                 final_state = ping_result.state
+            elif ping_result.error and "direct connection not established" in ping_result.error.lower():
+                # Tailscale reports this when direct path cannot be established; for DERP-suspected
+                # peers this is a strong indicator traffic is relayed via DERP.
+                final_state = NodeState.DERP
             else:
                 final_state = NodeState.UNKNOWN
 

@@ -56,6 +56,7 @@ async def tailscale_ping(
 ) -> tuple[str | None, str | None]:
     command = build_tailscale_command(binary, socket_path, ["ping", "-c", str(count), ip])
     code, stdout, stderr = await run_command(command, timeout_seconds=timeout_seconds)
+    combined_output = "\n".join(part for part in [stdout.strip(), stderr.strip()] if part).strip()
     if code != 0:
-        return None, stderr.strip() or f"tailscale ping failed with exit code {code}"
-    return stdout, None
+        return combined_output or None, stderr.strip() or f"tailscale ping failed with exit code {code}"
+    return combined_output or stdout, None
