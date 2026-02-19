@@ -78,7 +78,10 @@ def _normalize_nodes(nodes_raw: list[dict[str, Any]] | None) -> list[NodeConfig]
 def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = ".env") -> AppConfig:
     env_file = Path(env_path)
     if env_file.exists():
-        load_dotenv(env_file)
+        # Override inherited process vars so project-local .env is authoritative.
+        load_dotenv(dotenv_path=env_file, override=True, encoding="utf-8-sig")
+    else:
+        logger.warning("Env file not found at %s; relying on process environment only.", env_file)
 
     config_file = Path(config_path)
     if not config_file.exists():
@@ -117,6 +120,13 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
         ntfy_url=_env_str("NTFY_URL"),
         ntfy_topic=_env_str("NTFY_TOPIC"),
         ntfy_token=_env_str("NTFY_TOKEN"),
+    )
+    logger.info(
+        "Secrets resolved: discord=%s ntfy_url=%s ntfy_topic=%s ntfy_token=%s",
+        "set" if secrets.discord_webhook_url else "missing",
+        "set" if secrets.ntfy_url else "missing",
+        "set" if secrets.ntfy_topic else "missing",
+        "set" if secrets.ntfy_token else "missing",
     )
 
     if not nodes:
