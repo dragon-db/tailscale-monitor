@@ -58,12 +58,25 @@ def _priority(previous: NodeState, current: NodeState) -> str:
 class NotifierManager:
     def __init__(self, secrets: SecretsConfig):
         self._secrets = secrets
+        logger.info(
+            "Notifier channels configured: discord=%s ntfy=%s",
+            "enabled" if self._secrets.discord_webhook_url else "disabled",
+            "enabled" if (self._secrets.ntfy_url and self._secrets.ntfy_topic) else "disabled",
+        )
 
     @property
     def has_channels(self) -> bool:
         return bool(self._secrets.discord_webhook_url) or bool(
             self._secrets.ntfy_url and self._secrets.ntfy_topic
         )
+
+    @property
+    def has_discord(self) -> bool:
+        return bool(self._secrets.discord_webhook_url)
+
+    @property
+    def has_ntfy(self) -> bool:
+        return bool(self._secrets.ntfy_url and self._secrets.ntfy_topic)
 
     async def send_transition(
         self,
@@ -96,6 +109,25 @@ class NotifierManager:
                 logger.error("Notification failed via %s for %s: %s", channel, node.ip, error)
 
         return channels_sent
+
+    async def send_discord_test(self) -> tuple[bool, str | None]:
+        if not self._secrets.discord_webhook_url:
+            return False, "DISCORD_WEBHOOK_URL is not configured"
+
+        payload = {
+            "content": "tailscale-monitor Discord test notification",
+            "embeds": [
+                {
+                    "title": "Discord Test",
+                    "description": "If you can read this, Discord webhook delivery is working.",
+                    "color": 51411,
+                    "footer": {"text": "tailscale-monitor"},
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            ],
+            "allowed_mentions": {"parse": []},
+        }
+        return await send_discord_webhook(self._secrets.discord_webhook_url, payload)
 
     async def _send_discord(
         self,

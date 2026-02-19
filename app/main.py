@@ -30,7 +30,7 @@ def build_application():
     notifier = NotifierManager(config.secrets)
     monitor_service = MonitorService(config=config, storage=storage, notifier=notifier)
     scheduler = MonitorScheduler(config=config, monitor_service=monitor_service)
-    app = create_app(config=config, storage=storage, scheduler=scheduler)
+    app = create_app(config=config, storage=storage, scheduler=scheduler, notifier=notifier)
 
     return app
 

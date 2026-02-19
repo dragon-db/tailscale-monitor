@@ -8,11 +8,17 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from .models import AppConfig
+from .notifiers.manager import NotifierManager
 from .scheduler import MonitorScheduler
 from .storage import Storage
 
 
-def create_app(config: AppConfig, storage: Storage, scheduler: MonitorScheduler) -> FastAPI:
+def create_app(
+    config: AppConfig,
+    storage: Storage,
+    scheduler: MonitorScheduler,
+    notifier: NotifierManager,
+) -> FastAPI:
     configured_ips = [node.ip for node in config.nodes]
 
     @asynccontextmanager
@@ -29,6 +35,7 @@ def create_app(config: AppConfig, storage: Storage, scheduler: MonitorScheduler)
     app.state.config = config
     app.state.storage = storage
     app.state.scheduler = scheduler
+    app.state.notifier = notifier
 
     @app.get("/health")
     async def health() -> dict:
@@ -61,6 +68,13 @@ def create_app(config: AppConfig, storage: Storage, scheduler: MonitorScheduler)
         if not scheduler.has_node(ip):
             raise HTTPException(status_code=404, detail=f"Node {ip} is not configured")
         return scheduler.trigger_node(ip)
+
+    @app.post("/api/test/discord")
+    async def post_test_discord() -> dict:
+        success, error = await notifier.send_discord_test()
+        if not success:
+            raise HTTPException(status_code=400, detail=error or "Discord test failed")
+        return {"ok": True, "message": "Discord test notification sent"}
 
     @app.get("/")
     async def index() -> FileResponse:

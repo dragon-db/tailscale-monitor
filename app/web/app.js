@@ -178,6 +178,39 @@ async function refresh() {
   }
 }
 
+function showDiscordTestStatus(ok, message) {
+  const el = document.getElementById("discordTestStatus");
+  el.classList.remove("hidden", "bg-emerald-950", "border-emerald-800", "text-emerald-200", "bg-red-950", "border-red-800", "text-red-200");
+  if (ok) {
+    el.classList.add("bg-emerald-950", "border-emerald-800", "text-emerald-200");
+  } else {
+    el.classList.add("bg-red-950", "border-red-800", "text-red-200");
+  }
+  el.textContent = message;
+}
+
+async function testDiscord() {
+  const button = document.getElementById("testDiscordBtn");
+  button.disabled = true;
+  try {
+    const response = await fetch("/api/test/discord", { method: "POST" });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = payload.detail || "Discord test failed";
+      showDiscordTestStatus(false, `Discord test failed: ${detail}`);
+      return;
+    }
+    showDiscordTestStatus(true, payload.message || "Discord test sent");
+  } catch (error) {
+    showDiscordTestStatus(false, `Discord test failed: ${String(error)}`);
+  } finally {
+    setTimeout(() => {
+      button.disabled = false;
+    }, 1000);
+  }
+}
+
 document.getElementById("refreshBtn").addEventListener("click", refresh);
+document.getElementById("testDiscordBtn").addEventListener("click", testDiscord);
 setInterval(refresh, 30000);
 refresh();

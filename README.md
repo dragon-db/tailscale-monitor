@@ -10,6 +10,7 @@ FastAPI-based monitor for multiple Tailscale nodes.
 - Discord + Ntfy notifications on state transitions
 - Web dashboard + JSON API
 - Manual out-of-schedule check triggers
+- Discord test trigger from UI (`Test Discord`) and API (`POST /api/test/discord`)
 
 ## Requirements
 
@@ -101,6 +102,10 @@ Script behavior:
 
 Dashboard: `http://localhost:8080`
 Docs: `http://localhost:8080/docs`
+
+Notifier startup log:
+- On boot, the app logs configured channels with:
+  - `Notifier channels configured: discord=enabled|disabled ntfy=enabled|disabled`
 
 ## Manual Setup (Optional)
 
