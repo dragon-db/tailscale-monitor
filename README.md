@@ -96,6 +96,7 @@ Script behavior:
 - If `.venv` does not exist, it is created automatically.
 - If `requirements.txt` changed, dependencies are reinstalled.
 - If `config.yaml` or `.env` is missing, they are created from example files.
+- On each `start`/`restart`, `.run/tailscale-monitor.log` is truncated before launching.
 - App runs in background with:
   - PID: `.run/tailscale-monitor.pid`
   - Logs: `.run/tailscale-monitor.log`

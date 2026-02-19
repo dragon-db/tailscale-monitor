@@ -149,6 +149,8 @@ start_app() {
   install_deps_if_needed
   ensure_defaults
 
+  : > "$LOG_FILE"
+  log "Cleared previous log file at $LOG_FILE"
   log "Starting application"
   nohup "$VENV_PYTHON" -m app.main >> "$LOG_FILE" 2>&1 &
   local pid=$!
