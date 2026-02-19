@@ -17,6 +17,65 @@ FastAPI-based monitor for multiple Tailscale nodes.
 - Host with `tailscale` CLI installed
 - Access to tailscaled socket (default: `/var/run/tailscale/tailscaled.sock`)
 
+## Connection Classification Logic
+
+The monitor treats `tailscale status --json` as the primary source of truth for
+per-peer routing state.
+
+Decision order (highest priority first):
+
+1. `Online == false` or peer missing from JSON -> `OFFLINE`
+2. `PeerRelay != ""` -> `PEER_RELAY` (shown in UI as **HIGH SPEED RELAY**)
+3. `CurAddr != ""` -> `DIRECT` (even if `Relay` is also present)
+4. `PeerRelay == ""` and `CurAddr == ""` -> `DERP suspected`, confirm with `tailscale ping`
+5. if ping says `via DERP (...)` -> `DERP`
+6. otherwise -> `UNKNOWN`
+
+Important:
+- `Relay` alone is not treated as active DERP proof; it is used as a DERP-suspect hint and validated with ping.
+- `/metrics` (`http://100.100.100.100/metrics`) is backseated and does not drive
+  node routing classification.
+- Optional stale fallback: if peer is stale for >= 10 minutes and inactive
+  (`Active=false`) while not explicitly `Online=true`, state can be treated as `OFFLINE`.
+
+## Cross-Verification Commands
+
+Use these commands on the same machine as the monitor:
+
+```bash
+# 1) Raw JSON used by the app
+tailscale --socket /var/run/tailscale/tailscaled.sock status --json > /tmp/ts-status.json
+
+# 2) Show one peer block by Tailscale IP
+IP="100.x.x.x"
+jq --arg ip "$IP" '
+  .Peer
+  | to_entries[]
+  | select((.value.TailscaleIPs // []) | map(split("/")[0]) | index($ip))
+  | .value
+' /tmp/ts-status.json
+
+# 3) Print only routing fields used by detector
+jq --arg ip "$IP" -r '
+  .Peer
+  | to_entries[]
+  | select((.value.TailscaleIPs // []) | map(split("/")[0]) | index($ip))
+  | "Online=\(.value.Online) Active=\(.value.Active) CurAddr=\(.value.CurAddr) Relay=\(.value.Relay) PeerRelay=\(.value.PeerRelay) LastSeen=\(.value.LastSeen)"
+' /tmp/ts-status.json
+
+# 4) Inspect latest app decisions stored in SQLite
+sqlite3 data/monitor.db "
+select checked_at,state,approach2_state,ping_state,derp_region,peer_relay_endpoint
+from checks
+where node_ip='$IP'
+order by checked_at desc
+limit 10;
+"
+
+# 5) Explicit DERP confirmation probe for one peer
+tailscale --socket /var/run/tailscale/tailscaled.sock ping -c 5 "$IP"
+```
+
 ## Quick Start (One-Stop Script)
 
 Use root `run.sh` for all lifecycle actions.
@@ -63,9 +122,10 @@ Docs: `http://localhost:8080/docs`
    - No notifier configured logs warning and app still runs.
 
 2. Status mapping
-   - Online direct node resolves `DIRECT`.
-   - Node with `Relay` resolves `DERP`.
-   - Node with `PeerRelay` resolves `PEER_RELAY`.
+   - Node with `PeerRelay` resolves `PEER_RELAY` (HIGH SPEED RELAY).
+   - Node with `CurAddr` resolves `DIRECT` even when `Relay` is also present.
+   - Node with empty `CurAddr` and empty `PeerRelay` becomes DERP-suspect and is confirmed via ping output.
+   - `via DERP (...)` in ping output confirms `DERP`.
    - Missing/offline peer resolves `OFFLINE`.
    - Invalid status output resolves `UNKNOWN` with low confidence.
 

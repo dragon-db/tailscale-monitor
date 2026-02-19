@@ -25,6 +25,15 @@ def _parse_last_seen(last_seen_raw: str | None) -> datetime | None:
         return None
 
 
+def _non_empty(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        value = str(value)
+    value = value.strip()
+    return value or None
+
+
 def _find_peer_for_ip(status_json: dict[str, Any], ip: str) -> dict[str, Any] | None:
     def _matches(candidate: Any, target: str) -> bool:
         if not isinstance(candidate, str):
@@ -83,22 +92,27 @@ async def get_node_status(
             raw_status_json=raw_status,
         )
 
+    peer_relay = _non_empty(peer.get("PeerRelay"))
+    cur_addr = _non_empty(peer.get("CurAddr"))
+    relay = _non_empty(peer.get("Relay"))
+    active_field = bool(peer.get("Active", False))
     last_seen = _parse_last_seen(peer.get("LastSeen"))
-    # In practice, LastSeen can remain stale while Online=true for some peers.
-    # Only apply stale LastSeen offline logic when Online is not explicitly true.
-    if last_seen is not None and online_field is not True:
-        threshold = datetime.now(timezone.utc) - timedelta(minutes=offline_threshold_minutes)
+    stale_grace_minutes = max(10, offline_threshold_minutes)
+    if last_seen is not None:
+        threshold = datetime.now(timezone.utc) - timedelta(minutes=stale_grace_minutes)
         if last_seen < threshold:
-            return StatusDetection(
-                state=NodeState.OFFLINE,
-                online=False,
-                raw_peer=peer,
-                raw_status_json=raw_status,
-            )
-
-    peer_relay = peer.get("PeerRelay")
-    relay = peer.get("Relay")
-    cur_addr = peer.get("CurAddr")
+            # Online=true and stale LastSeen can happen; only mark OFFLINE when also inactive.
+            if online_field is not True and not active_field:
+                return StatusDetection(
+                    state=NodeState.OFFLINE,
+                    online=False,
+                    raw_peer=peer,
+                    raw_status_json=raw_status,
+                    error=(
+                        f"Peer stale and inactive: LastSeen older than {stale_grace_minutes} minutes "
+                        "with Active=false"
+                    ),
+                )
 
     if peer_relay:
         return StatusDetection(
@@ -109,21 +123,23 @@ async def get_node_status(
             raw_status_json=raw_status,
         )
 
-    if relay:
-        return StatusDetection(
-            state=NodeState.DERP,
-            online=online_field is not False,
-            derp_region=str(relay),
-            raw_peer=peer,
-            raw_status_json=raw_status,
-        )
-
     if cur_addr:
         return StatusDetection(
             state=NodeState.DIRECT,
             online=online_field is not False,
             raw_peer=peer,
             raw_status_json=raw_status,
+        )
+
+    if relay:
+        # Relay alone is a DERP-suspect signal, not proof of active DERP data path.
+        return StatusDetection(
+            state=NodeState.UNKNOWN,
+            online=online_field is not False,
+            derp_region=str(relay),
+            raw_peer=peer,
+            raw_status_json=raw_status,
+            error="Relay present but no CurAddr/PeerRelay; DERP suspected pending ping confirmation",
         )
 
     return StatusDetection(

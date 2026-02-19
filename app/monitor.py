@@ -4,14 +4,12 @@ import asyncio
 import logging
 from datetime import datetime, timezone
 
-from .detectors.metrics import compute_delta, dominant_state, fetch_metrics
 from .detectors.ping import run_ping_check
 from .detectors.status import get_node_status
 from .models import (
     AppConfig,
     CheckResult,
     Confidence,
-    MetricsDelta,
     NodeConfig,
     NodeRuntimeState,
     NodeState,
@@ -35,39 +33,25 @@ class MonitorService:
             self.runtime.setdefault(node.ip, NodeRuntimeState())
 
     async def run_check(self, node: NodeConfig, reason: str = "scheduled") -> CheckResult:
-        status_task = asyncio.create_task(
-            get_node_status(
-                tailscale_binary=self.config.settings.tailscale_binary,
-                tailscale_socket=self.config.settings.tailscale_socket,
-                ip=node.ip,
-                offline_threshold_minutes=self.config.settings.offline_threshold_minutes,
-            )
+        status_result = await get_node_status(
+            tailscale_binary=self.config.settings.tailscale_binary,
+            tailscale_socket=self.config.settings.tailscale_socket,
+            ip=node.ip,
+            offline_threshold_minutes=self.config.settings.offline_threshold_minutes,
         )
-        metrics_task = asyncio.create_task(fetch_metrics())
-
-        status_result = await status_task
-        metrics_snapshot, metrics_error = await metrics_task
-
-        runtime = self.runtime[node.ip]
-
-        if metrics_snapshot is not None:
-            delta = compute_delta(runtime.previous_metrics, metrics_snapshot)
-            runtime.previous_metrics = metrics_snapshot
-            approach1 = dominant_state(delta) or NodeState.UNKNOWN
-        else:
-            delta = MetricsDelta()
-            approach1 = NodeState.UNKNOWN
-            if metrics_error:
-                logger.warning("metrics fetch failed for %s: %s", node.ip, metrics_error)
 
         final_state = status_result.state
-        confidence = self._resolve_confidence(final_state, status_result.error, approach1, delta)
+        derp_suspected = (
+            status_result.state == NodeState.UNKNOWN
+            and status_result.online
+            and bool(status_result.derp_region)
+        )
 
         ping_result = PingResult()
         if (
-            final_state == NodeState.DERP
+            self.config.settings.ping_on_derp_suspect
             and status_result.online
-            and self.config.settings.ping_on_derp_suspect
+            and (final_state == NodeState.DERP or derp_suspected)
         ):
             ping_result = await run_ping_check(
                 tailscale_binary=self.config.settings.tailscale_binary,
@@ -79,6 +63,22 @@ class MonitorService:
             if ping_result.error:
                 logger.warning("ping check failed for %s: %s", node.ip, ping_result.error)
 
+        if derp_suspected:
+            if ping_result.state in {NodeState.DERP, NodeState.DIRECT, NodeState.PEER_RELAY}:
+                final_state = ping_result.state
+            else:
+                final_state = NodeState.UNKNOWN
+
+        confidence = self._resolve_confidence(
+            final_state=final_state,
+            status_error=status_result.error,
+            ping_result=ping_result,
+        )
+
+        resolved_derp_region = None
+        if final_state == NodeState.DERP:
+            resolved_derp_region = status_result.derp_region or ping_result.derp_region
+
         check = CheckResult(
             node_ip=node.ip,
             node_label=node.label,
@@ -86,18 +86,18 @@ class MonitorService:
             checked_at=datetime.now(timezone.utc),
             state=final_state,
             confidence=confidence,
-            approach1_state=approach1,
+            approach1_state=None,
             approach2_state=status_result.state,
             ping_state=ping_result.state,
             ping_min_ms=ping_result.min_ms,
             ping_avg_ms=ping_result.avg_ms,
             ping_max_ms=ping_result.max_ms,
             ping_packet_loss_pct=ping_result.packet_loss_pct,
-            derp_region=status_result.derp_region or ping_result.derp_region,
+            derp_region=resolved_derp_region,
             peer_relay_endpoint=status_result.peer_relay_endpoint,
-            bytes_direct_delta=delta.direct,
-            bytes_relay_delta=delta.relay,
-            bytes_derp_delta=delta.derp,
+            bytes_direct_delta=0,
+            bytes_relay_delta=0,
+            bytes_derp_delta=0,
             raw_status_json=status_result.raw_status_json,
         )
 
@@ -112,8 +112,7 @@ class MonitorService:
         self,
         final_state: NodeState,
         status_error: str | None,
-        approach1: NodeState,
-        delta: MetricsDelta,
+        ping_result: PingResult,
     ) -> Confidence:
         if status_error and final_state == NodeState.UNKNOWN:
             return Confidence.LOW
@@ -121,17 +120,24 @@ class MonitorService:
         if final_state == NodeState.UNKNOWN:
             return Confidence.LOW
 
+        if status_error and "derp suspected pending ping confirmation" in status_error.lower():
+            if ping_result.state is None or ping_result.error:
+                return Confidence.LOW
+
+        if status_error and "stale and inactive" in status_error.lower():
+            return Confidence.LOW
+
         if final_state == NodeState.OFFLINE:
             return Confidence.HIGH
 
-        if final_state == NodeState.DIRECT and delta.direct > 0:
-            return Confidence.HIGH
-        if final_state == NodeState.PEER_RELAY and delta.relay > 0:
-            return Confidence.HIGH
-        if final_state == NodeState.DERP and delta.derp > 0:
+        if final_state in {NodeState.DIRECT, NodeState.PEER_RELAY}:
             return Confidence.HIGH
 
-        if approach1 not in {NodeState.UNKNOWN, final_state}:
+        if final_state == NodeState.DERP and ping_result.error:
+            return Confidence.MEDIUM
+        if final_state == NodeState.DERP and ping_result.state == NodeState.DERP:
+            return Confidence.HIGH
+        if final_state == NodeState.DERP and ping_result.state in {NodeState.DIRECT, NodeState.PEER_RELAY}:
             return Confidence.MEDIUM
 
         return Confidence.MEDIUM

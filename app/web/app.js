@@ -14,6 +14,14 @@ const dotColors = {
   UNKNOWN: "bg-slate-400",
 };
 
+const stateLabels = {
+  DIRECT: "DIRECT",
+  PEER_RELAY: "HIGH SPEED RELAY",
+  DERP: "DERP",
+  OFFLINE: "OFFLINE",
+  UNKNOWN: "UNKNOWN",
+};
+
 function formatRelative(iso) {
   if (!iso) return "never";
   const now = Date.now();
@@ -41,10 +49,11 @@ function formatDuration(seconds) {
 function stateBadge(state) {
   const palette = stateColors[state] || stateColors.UNKNOWN;
   const dot = dotColors[state] || dotColors.UNKNOWN;
+  const label = stateLabels[state] || stateLabels.UNKNOWN;
   return `
     <span class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full border text-xs font-semibold ${palette}">
       <span class="w-2 h-2 rounded-full ${dot}"></span>
-      ${state}
+      ${label}
     </span>
   `;
 }
@@ -133,7 +142,7 @@ function renderEvents(events) {
         <tr class="border-b border-slate-800 last:border-0">
           <td class="px-3 py-2 text-slate-300">${formatRelative(event.transitioned_at)}</td>
           <td class="px-3 py-2">${event.label || event.node_ip}</td>
-          <td class="px-3 py-2"><span class="px-2 py-1 rounded border text-xs ${colorClass}">${event.previous_state} -> ${event.current_state}</span></td>
+          <td class="px-3 py-2"><span class="px-2 py-1 rounded border text-xs ${colorClass}">${stateLabels[event.previous_state] || event.previous_state} -> ${stateLabels[event.current_state] || event.current_state}</span></td>
           <td class="px-3 py-2 text-slate-300">${formatDuration(event.duration_previous_seconds)}</td>
         </tr>
       `;

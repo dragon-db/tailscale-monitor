@@ -128,17 +128,8 @@ class NotifierManager:
                     "name": "Detection",
                     "value": (
                         f"Status JSON: {check.approach2_state.value if check.approach2_state else 'UNKNOWN'} | "
-                        f"Metrics: {check.approach1_state.value if check.approach1_state else 'UNKNOWN'} | "
+                        "Metrics: Backseated | "
                         f"Ping: {check.ping_state.value if check.ping_state else 'N/A'}"
-                    ),
-                    "inline": False,
-                },
-                {
-                    "name": "Traffic Delta",
-                    "value": (
-                        f"Direct {check.bytes_direct_delta} bytes | "
-                        f"Relay {check.bytes_relay_delta} bytes | "
-                        f"DERP {check.bytes_derp_delta} bytes"
                     ),
                     "inline": False,
                 },
@@ -202,7 +193,7 @@ class NotifierManager:
             "",
             "Detection:",
             f"- Status: {check.approach2_state.value if check.approach2_state else 'UNKNOWN'}",
-            f"- Metrics: {check.approach1_state.value if check.approach1_state else 'UNKNOWN'}",
+            "- Metrics: Backseated",
             f"- Ping: {check.ping_state.value if check.ping_state else 'Not run'}",
         ]
 
@@ -216,10 +207,6 @@ class NotifierManager:
 
         if check.derp_region:
             lines.append(f"DERP region: {check.derp_region}")
-
-        lines.append(
-            f"Traffic delta: direct {check.bytes_direct_delta}, relay {check.bytes_relay_delta}, derp {check.bytes_derp_delta}"
-        )
 
         success, error = await send_ntfy_message(
             base_url=self._secrets.ntfy_url,

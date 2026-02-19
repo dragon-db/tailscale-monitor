@@ -22,12 +22,15 @@ This file is the persistent context handoff for coding agents working on `tailsc
 - App bootstrap:
   - `app/main.py` loads config, initializes storage, notifier manager, monitor service, and scheduler.
 - Monitor engine:
-  - `app/monitor.py` runs status + metrics detection, optional ping on DERP, confidence resolution, transition logic, notification dispatch.
+  - `app/monitor.py` runs status-based detection, optional ping on DERP, confidence resolution, transition logic, notification dispatch.
+  - Metrics are currently backseated and do not decide per-node routing state.
 - Scheduler:
   - `app/scheduler.py` runs per-node loops with interval overrides and manual trigger dedupe.
 - Detectors:
-  - `app/detectors/status.py` parses `tailscale status --json` (peer missing => `OFFLINE`).
-  - `app/detectors/metrics.py` parses `100.100.100.100/metrics` and computes deltas.
+  - `app/detectors/status.py` parses `tailscale status --json` with routing priority:
+    `PeerRelay` -> `CurAddr` -> `DERP-suspect` when both are empty.
+  - DERP is confirmed by `tailscale ping` output (`via DERP (...)`), not by `Relay` field alone.
+  - `app/detectors/metrics.py` remains available but is not used for active route classification.
   - `app/detectors/ping.py` parses `tailscale ping` output.
 - Commands:
   - `app/commands.py` wraps subprocess calls and uses `asyncio.to_thread` from async workflows.
@@ -61,7 +64,7 @@ This file is the persistent context handoff for coding agents working on `tailsc
 ## Data Model Summary
 
 - `nodes`: configured monitored peers
-- `checks`: per-check observations and metrics deltas
+- `checks`: per-check observations (metrics fields currently persisted as zero/N/A)
 - `transitions`: state changes and notification metadata
 
 ## Known Decisions (Locked)
@@ -79,3 +82,5 @@ This file is the persistent context handoff for coding agents working on `tailsc
 - 2026-02-19: Reworked start/stop script UX and reliability. Added root `run.sh`, changed docs to root command usage, retained `scripts/manage.sh` as wrapper, and fixed venv handling to recreate invalid partial `.venv` directories (prevents missing `bin/activate` failures). Impacted: `run.sh`, `scripts/manage.sh`, `README.md`, `AGENTS.md`.
 - 2026-02-19: Removed legacy wrapper script per early-stage simplification decision. `run.sh` is now the only lifecycle script. Impacted: `scripts/manage.sh` (deleted), `README.md`, `AGENTS.md`.
 - 2026-02-19: Fixed runtime/API correctness issues: migrated app lifecycle to FastAPI lifespan (removed deprecated `on_event` usage), filtered `/api/nodes` `/api/stats` `/api/transitions` to configured node IPs only (prevents stale DB nodes from appearing), and relaxed status offline classification to avoid false OFFLINE when `Online=true` but `LastSeen` is stale. Added CIDR-safe peer IP matching and reduced `httpx/httpcore` log noise. Impacted: `app/api.py`, `app/main.py`, `app/storage.py`, `app/detectors/status.py`, `app/logging.py`, `AGENTS.md`.
+- 2026-02-19: Major detection logic update. Routing state now prioritizes `PeerRelay`, then `CurAddr`, then `Relay` from `status --json`; metrics are backseated and no longer influence per-node route classification/confidence. Added stale+inactive offline fallback and updated notifier language/docs accordingly. Impacted: `app/detectors/status.py`, `app/monitor.py`, `app/notifiers/manager.py`, `README.md`, `AGENTS.md`.
+- 2026-02-19: Refined routing semantics to treat `Relay` as non-authoritative hint. Current path logic is: `PeerRelay` => HIGH SPEED RELAY, `CurAddr` => DIRECT, both empty => DERP suspected and confirmed by `tailscale ping` (`via DERP (...)`). Updated UI labels and docs for this behavior. Impacted: `app/detectors/status.py`, `app/monitor.py`, `app/web/app.js`, `README.md`, `AGENTS.md`, `monitor_architecture.md`.

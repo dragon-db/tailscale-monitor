@@ -2,6 +2,22 @@
 
 Build a Python 3.11+ application called `tailscale-monitor`. It monitors multiple Tailscale nodes for connection type changes (Direct, Peer Relay, DERP) and offline state, sends rich notifications, and serves a simple web dashboard. It runs as a Docker container using `network_mode: host` with the host's tailscale socket bind-mounted.
 
+### Implementation Update (2026-02-19)
+
+The active implementation now uses this routing decision order from
+`tailscale --socket ... status --json`:
+
+1. `PeerRelay != ""` -> `PEER_RELAY`
+2. `CurAddr != ""` -> `DIRECT` (even if `Relay` is also set)
+3. `PeerRelay == ""` and `CurAddr == ""` -> `DERP` suspected, confirm using `tailscale ping`
+4. ping contains `via DERP (...)` -> `DERP`; otherwise keep `UNKNOWN`
+
+Offline still has higher priority when peer is missing or `Online == false`.
+
+Metrics endpoint (`http://100.100.100.100/metrics`) is intentionally backseated
+for route classification because it is host-level aggregate telemetry, not
+authoritative per-peer path state.
+
 ---
 
 ### Section 1 — Project Structure & Configuration
@@ -83,6 +99,19 @@ MULTI-NODE ARCHITECTURE:
 - Use threading or asyncio to run all node checks concurrently.
   Each node has its own independent check interval (defaults to global setting).
 - Each node maintains its own state independently in memory and in SQLite.
+
+CURRENT IMPLEMENTATION OVERRIDE (V1):
+
+- Per-peer route classification is driven by `tailscale status --json` fields.
+- `/metrics` is not used to decide a node's DIRECT/DERP/PEER_RELAY state.
+- Ping is used as optional DERP confirmation only.
+- Effective path logic in production:
+  - `PeerRelay != ""` => `PEER_RELAY` (high-speed relay)
+  - else `CurAddr != ""` => `DIRECT`
+  - else `PeerRelay == ""` and `CurAddr == ""` => DERP suspected; confirm with ping
+  - ping output `via DERP (...)` => `DERP`, otherwise keep `UNKNOWN`
+- `Relay` by itself is treated as a hint (home DERP/signaling), not active-path proof.
+- If this override conflicts with older details below, this override wins.
 
 PER-NODE CHECK SEQUENCE (run every check_interval_seconds):
 
