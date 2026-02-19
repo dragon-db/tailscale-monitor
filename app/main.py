@@ -32,14 +32,6 @@ def build_application():
     scheduler = MonitorScheduler(config=config, monitor_service=monitor_service)
     app = create_app(config=config, storage=storage, scheduler=scheduler)
 
-    @app.on_event("startup")
-    async def _on_startup() -> None:
-        await scheduler.start()
-
-    @app.on_event("shutdown")
-    async def _on_shutdown() -> None:
-        await scheduler.stop()
-
     return app
 
 

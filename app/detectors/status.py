@@ -26,6 +26,11 @@ def _parse_last_seen(last_seen_raw: str | None) -> datetime | None:
 
 
 def _find_peer_for_ip(status_json: dict[str, Any], ip: str) -> dict[str, Any] | None:
+    def _matches(candidate: Any, target: str) -> bool:
+        if not isinstance(candidate, str):
+            return False
+        return candidate.split("/", 1)[0] == target
+
     peers = status_json.get("Peer")
     if not isinstance(peers, dict):
         return None
@@ -34,7 +39,7 @@ def _find_peer_for_ip(status_json: dict[str, Any], ip: str) -> dict[str, Any] | 
         if not isinstance(peer, dict):
             continue
         ips = peer.get("TailscaleIPs") or []
-        if ip in ips:
+        if any(_matches(candidate, ip) for candidate in ips):
             return peer
     return None
 
@@ -69,8 +74,8 @@ async def get_node_status(
             error="Peer not present in tailscale status output",
         )
 
-    online = bool(peer.get("Online", False))
-    if not online:
+    online_field = peer.get("Online")
+    if online_field is False:
         return StatusDetection(
             state=NodeState.OFFLINE,
             online=False,
@@ -79,7 +84,9 @@ async def get_node_status(
         )
 
     last_seen = _parse_last_seen(peer.get("LastSeen"))
-    if last_seen is not None:
+    # In practice, LastSeen can remain stale while Online=true for some peers.
+    # Only apply stale LastSeen offline logic when Online is not explicitly true.
+    if last_seen is not None and online_field is not True:
         threshold = datetime.now(timezone.utc) - timedelta(minutes=offline_threshold_minutes)
         if last_seen < threshold:
             return StatusDetection(
@@ -96,7 +103,7 @@ async def get_node_status(
     if peer_relay:
         return StatusDetection(
             state=NodeState.PEER_RELAY,
-            online=True,
+            online=online_field is not False,
             peer_relay_endpoint=str(peer_relay),
             raw_peer=peer,
             raw_status_json=raw_status,
@@ -105,7 +112,7 @@ async def get_node_status(
     if relay:
         return StatusDetection(
             state=NodeState.DERP,
-            online=True,
+            online=online_field is not False,
             derp_region=str(relay),
             raw_peer=peer,
             raw_status_json=raw_status,
@@ -114,14 +121,14 @@ async def get_node_status(
     if cur_addr:
         return StatusDetection(
             state=NodeState.DIRECT,
-            online=True,
+            online=online_field is not False,
             raw_peer=peer,
             raw_status_json=raw_status,
         )
 
     return StatusDetection(
         state=NodeState.UNKNOWN,
-        online=online,
+        online=online_field is not False,
         raw_peer=peer,
         raw_status_json=raw_status,
         error="Could not determine path from peer data",

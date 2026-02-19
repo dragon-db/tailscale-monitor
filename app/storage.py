@@ -234,7 +234,17 @@ class Storage:
             conn.commit()
             return cur.rowcount
 
-    def get_current_state_all_nodes(self) -> list[dict]:
+    def get_current_state_all_nodes(self, node_ips: list[str] | None = None) -> list[dict]:
+        if node_ips is not None and len(node_ips) == 0:
+            return []
+
+        ip_filter = ""
+        params: list[object] = []
+        if node_ips is not None:
+            placeholders = ", ".join("?" for _ in node_ips)
+            ip_filter = f"WHERE n.ip IN ({placeholders})"
+            params.extend(node_ips)
+
         query = """
         SELECT
             n.ip,
@@ -254,12 +264,14 @@ class Storage:
             ORDER BY c2.checked_at DESC
             LIMIT 1
         )
+        {ip_filter}
         ORDER BY n.label COLLATE NOCASE ASC
         """
 
         rows: list[dict] = []
         with self._connect() as conn:
-            for row in conn.execute(query).fetchall():
+            rendered_query = query.format(ip_filter=ip_filter)
+            for row in conn.execute(rendered_query, params).fetchall():
                 uptime = self.get_uptime_stats(row["ip"], days=7)
                 rows.append(
                     {
@@ -296,8 +308,18 @@ class Storage:
             rows = conn.execute(query, (ip, limit)).fetchall()
             return [dict(row) for row in rows]
 
-    def get_recent_transitions(self, limit: int = 50) -> list[dict]:
+    def get_recent_transitions(self, limit: int = 50, node_ips: list[str] | None = None) -> list[dict]:
         limit = max(1, min(limit, 500))
+        if node_ips is not None and len(node_ips) == 0:
+            return []
+
+        ip_filter = ""
+        params: list[object] = []
+        if node_ips is not None:
+            placeholders = ", ".join("?" for _ in node_ips)
+            ip_filter = f"WHERE t.node_ip IN ({placeholders})"
+            params.extend(node_ips)
+
         query = """
         SELECT
             t.id,
@@ -312,12 +334,15 @@ class Storage:
             t.transition_reason
         FROM transitions t
         LEFT JOIN nodes n ON n.ip = t.node_ip
+        {ip_filter}
         ORDER BY t.transitioned_at DESC
         LIMIT ?
         """
+        params.append(limit)
 
         with self._connect() as conn:
-            rows = conn.execute(query, (limit,)).fetchall()
+            rendered_query = query.format(ip_filter=ip_filter)
+            rows = conn.execute(rendered_query, params).fetchall()
             result: list[dict] = []
             for row in rows:
                 item = dict(row)
@@ -362,8 +387,8 @@ class Storage:
         }
         return {"uptime_pct": uptime_pct, "state_pct": state_pct}
 
-    def get_stats_summary(self) -> dict:
-        nodes = self.get_current_state_all_nodes()
+    def get_stats_summary(self, node_ips: list[str] | None = None) -> dict:
+        nodes = self.get_current_state_all_nodes(node_ips=node_ips)
         total_nodes = len(nodes)
         offline = 0
         derp = 0
