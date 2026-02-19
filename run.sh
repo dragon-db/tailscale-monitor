@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="${VENV_DIR:-$PROJECT_ROOT/.venv}"
 RUN_DIR="$PROJECT_ROOT/.run"
 PID_FILE="$RUN_DIR/tailscale-monitor.pid"
 LOG_FILE="$RUN_DIR/tailscale-monitor.log"
 REQ_FILE="$PROJECT_ROOT/requirements.txt"
 REQ_HASH_FILE="$VENV_DIR/.requirements.sha256"
+VENV_PYTHON=""
 
 mkdir -p "$RUN_DIR"
 
@@ -62,13 +63,48 @@ print(hashlib.sha256(payload).hexdigest())
 PY
 }
 
+resolve_venv_paths() {
+  local py_unix="$VENV_DIR/bin/python"
+  local py_win="$VENV_DIR/Scripts/python.exe"
+  local act_unix="$VENV_DIR/bin/activate"
+  local act_win="$VENV_DIR/Scripts/activate"
+
+  if [[ -x "$py_unix" && -f "$act_unix" ]]; then
+    VENV_PYTHON="$py_unix"
+    # shellcheck disable=SC1091
+    source "$act_unix"
+    return 0
+  fi
+
+  if [[ -x "$py_win" && -f "$act_win" ]]; then
+    VENV_PYTHON="$py_win"
+    # shellcheck disable=SC1091
+    source "$act_win"
+    return 0
+  fi
+
+  return 1
+}
+
+create_venv() {
+  log "Creating virtual environment at $VENV_DIR"
+  "$PYTHON_BIN" -m venv "$VENV_DIR"
+}
+
 ensure_venv() {
   if [[ ! -d "$VENV_DIR" ]]; then
-    log "Creating virtual environment at $VENV_DIR"
-    "$PYTHON_BIN" -m venv "$VENV_DIR"
+    create_venv
   fi
-  # shellcheck disable=SC1091
-  source "$VENV_DIR/bin/activate"
+
+  if ! resolve_venv_paths; then
+    log "Detected invalid or partial venv at $VENV_DIR; recreating it"
+    rm -rf "$VENV_DIR"
+    create_venv
+    if ! resolve_venv_paths; then
+      log "ERROR: Unable to activate venv after recreation."
+      exit 1
+    fi
+  fi
 }
 
 install_deps_if_needed() {
@@ -83,8 +119,8 @@ install_deps_if_needed() {
 
   if [[ "$current_hash" != "$existing_hash" ]]; then
     log "Installing dependencies from requirements.txt"
-    python -m pip install --upgrade pip
-    python -m pip install -r "$REQ_FILE"
+    "$VENV_PYTHON" -m pip install --upgrade pip
+    "$VENV_PYTHON" -m pip install -r "$REQ_FILE"
     printf '%s\n' "$current_hash" > "$REQ_HASH_FILE"
   else
     log "Dependencies are up to date"
@@ -114,7 +150,7 @@ start_app() {
   ensure_defaults
 
   log "Starting application"
-  nohup "$VENV_DIR/bin/python" -m app.main >> "$LOG_FILE" 2>&1 &
+  nohup "$VENV_PYTHON" -m app.main >> "$LOG_FILE" 2>&1 &
   local pid=$!
   printf '%s\n' "$pid" > "$PID_FILE"
   sleep 1
@@ -175,7 +211,7 @@ restart_app() {
 
 usage() {
   cat <<'EOF'
-Usage: scripts/manage.sh <command>
+Usage: run.sh <command>
 
 Commands:
   start     Create/reuse venv, install deps if needed, and start app

@@ -51,7 +51,7 @@ This file is the persistent context handoff for coding agents working on `tailsc
 
 ## Operational Workflow
 
-- One-stop management script: `scripts/manage.sh`
+- One-stop management script: `run.sh`
   - `start`: ensure/reuse venv, install deps, start app in background
   - `stop`: stop running app process using pid file
   - `restart`, `status`, `logs`
@@ -76,3 +76,5 @@ This file is the persistent context handoff for coding agents working on `tailsc
 
 - 2026-02-19: Initial implementation baseline documented in AGENTS context. Added one-stop runtime script (`scripts/manage.sh`) and updated run workflow docs. Impacted: `AGENTS.md`, `scripts/manage.sh`, `README.md`.
 - 2026-02-19: Repository bootstrapping and first publish workflow. Added `.gitignore`, initialized git history, and pushed initial codebase to GitHub remote `dragon-db/tailscale-monitor`. Impacted: `.gitignore`, `AGENTS.md`.
+- 2026-02-19: Reworked start/stop script UX and reliability. Added root `run.sh`, changed docs to root command usage, retained `scripts/manage.sh` as wrapper, and fixed venv handling to recreate invalid partial `.venv` directories (prevents missing `bin/activate` failures). Impacted: `run.sh`, `scripts/manage.sh`, `README.md`, `AGENTS.md`.
+- 2026-02-19: Removed legacy wrapper script per early-stage simplification decision. `run.sh` is now the only lifecycle script. Impacted: `scripts/manage.sh` (deleted), `README.md`, `AGENTS.md`.

@@ -19,18 +19,18 @@ FastAPI-based monitor for multiple Tailscale nodes.
 
 ## Quick Start (One-Stop Script)
 
-Use `scripts/manage.sh` for all lifecycle actions (run with Bash).
+Use root `run.sh` for all lifecycle actions.
 
 1. Start app (auto-creates/reuses venv, installs deps, and starts server):
-   - `bash scripts/manage.sh start`
+   - `bash run.sh start`
 2. Stop app:
-   - `bash scripts/manage.sh stop`
+   - `bash run.sh stop`
 3. Restart app:
-   - `bash scripts/manage.sh restart`
+   - `bash run.sh restart`
 4. Check status:
-   - `bash scripts/manage.sh status`
+   - `bash run.sh status`
 5. Tail logs:
-   - `bash scripts/manage.sh logs`
+   - `bash run.sh logs`
 
 Script behavior:
 - If `.venv` does not exist, it is created automatically.
