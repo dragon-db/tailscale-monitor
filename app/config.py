@@ -14,6 +14,18 @@ from .models import AppConfig, NodeConfig, SecretsConfig, SettingsConfig
 logger = logging.getLogger(__name__)
 
 
+def _env_str(name: str) -> str | None:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned:
+        return None
+    if len(cleaned) >= 2 and cleaned[0] == cleaned[-1] and cleaned[0] in {"'", '"'}:
+        cleaned = cleaned[1:-1].strip()
+    return cleaned or None
+
+
 def _as_bool(value: Any, default: bool) -> bool:
     if value is None:
         return default
@@ -101,10 +113,10 @@ def load_config(config_path: str | Path = "config.yaml", env_path: str | Path = 
     nodes = _normalize_nodes(raw.get("nodes"))
 
     secrets = SecretsConfig(
-        discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL"),
-        ntfy_url=os.getenv("NTFY_URL"),
-        ntfy_topic=os.getenv("NTFY_TOPIC"),
-        ntfy_token=os.getenv("NTFY_TOKEN"),
+        discord_webhook_url=_env_str("DISCORD_WEBHOOK_URL"),
+        ntfy_url=_env_str("NTFY_URL"),
+        ntfy_topic=_env_str("NTFY_TOPIC"),
+        ntfy_token=_env_str("NTFY_TOKEN"),
     )
 
     if not nodes:

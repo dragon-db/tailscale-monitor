@@ -104,8 +104,13 @@ class NotifierManager:
         check: CheckResult,
     ) -> tuple[str, bool, str | None]:
         assert self._secrets.discord_webhook_url is not None
+        event_title = _title(node.label, transition.previous_state, transition.current_state)
+        content = f"{event_title} | {transition.transition_reason}".strip()
+        if len(content) > 1900:
+            content = f"{content[:1897]}..."
+
         embed = {
-            "title": _title(node.label, transition.previous_state, transition.current_state),
+            "title": event_title,
             "description": transition.transition_reason,
             "color": COLOR_BY_STATE.get(check.state, COLOR_BY_STATE[NodeState.UNKNOWN]),
             "fields": [
@@ -167,7 +172,11 @@ class NotifierManager:
                 }
             )
 
-        payload = {"embeds": [embed]}
+        payload = {
+            "content": content,
+            "embeds": [embed],
+            "allowed_mentions": {"parse": []},
+        }
         success, error = await send_discord_webhook(self._secrets.discord_webhook_url, payload)
         return "discord", success, error
 
