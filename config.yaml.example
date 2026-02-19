@@ -1,0 +1,21 @@
+﻿settings:
+  check_interval_seconds: 300
+  ping_on_derp_suspect: true
+  ping_count: 3
+  ping_timeout_seconds: 15
+  notification_cooldown_seconds: 0
+  data_retention_days: 30
+  log_level: INFO
+  web_ui_port: 8080
+  offline_threshold_minutes: 5
+  tailscale_socket: /var/run/tailscale/tailscaled.sock
+  tailscale_binary: tailscale
+
+nodes:
+  - ip: "100.64.0.1"
+    label: "my-vps-1"
+    tags: ["production", "vps"]
+    check_interval_seconds: 60
+  - ip: "100.64.0.2"
+    label: "home-server"
+    tags: ["homelab"]

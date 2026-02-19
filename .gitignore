@@ -1,0 +1,14 @@
+.venv/
+.run/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+.pytest_cache/
+
+# local runtime/config data
+.env
+config.yaml
+data/monitor.db
+data/*.db

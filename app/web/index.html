@@ -1,0 +1,69 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tailscale Monitor</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <div class="max-w-7xl mx-auto px-4 py-6">
+    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
+      <div>
+        <h1 class="text-3xl font-bold tracking-tight">Tailscale Monitor</h1>
+        <p id="lastRefresh" class="text-sm text-slate-400">Last refresh: never</p>
+      </div>
+      <div class="flex gap-2 items-center">
+        <button id="refreshBtn" class="px-4 py-2 bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold rounded-lg">Refresh</button>
+        <div id="loadingPill" class="hidden text-xs px-2 py-1 rounded-full bg-slate-700 text-slate-200">Refreshing...</div>
+      </div>
+    </header>
+
+    <section class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6" id="summaryStrip">
+      <div class="p-4 rounded-xl bg-slate-900 border border-slate-800">
+        <div class="text-slate-400 text-sm">Total Nodes</div>
+        <div id="statTotal" class="text-3xl font-semibold">0</div>
+      </div>
+      <div class="p-4 rounded-xl bg-emerald-950 border border-emerald-900">
+        <div class="text-emerald-300 text-sm">Online</div>
+        <div id="statOnline" class="text-3xl font-semibold text-emerald-200">0</div>
+      </div>
+      <div class="p-4 rounded-xl bg-red-950 border border-red-900">
+        <div class="text-red-300 text-sm">Offline</div>
+        <div id="statOffline" class="text-3xl font-semibold text-red-200">0</div>
+      </div>
+      <div class="p-4 rounded-xl bg-orange-950 border border-orange-900">
+        <div class="text-orange-300 text-sm">On DERP</div>
+        <div id="statDerp" class="text-3xl font-semibold text-orange-200">0</div>
+      </div>
+    </section>
+
+    <section class="mb-8">
+      <h2 class="text-xl font-semibold mb-3">Nodes</h2>
+      <div id="nodesGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4"></div>
+    </section>
+
+    <section>
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xl font-semibold">Event Log</h2>
+      </div>
+      <div class="overflow-x-auto rounded-xl border border-slate-800 bg-slate-900">
+        <table class="w-full text-sm">
+          <thead class="text-left text-slate-300 border-b border-slate-800">
+            <tr>
+              <th class="px-3 py-2">Time</th>
+              <th class="px-3 py-2">Node</th>
+              <th class="px-3 py-2">Change</th>
+              <th class="px-3 py-2">Previous Duration</th>
+            </tr>
+          </thead>
+          <tbody id="eventsTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
