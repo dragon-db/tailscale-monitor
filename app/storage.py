@@ -47,6 +47,21 @@ class Storage:
         conn.execute("PRAGMA busy_timeout=5000;")
         return conn
 
+    def _column_exists(self, conn: sqlite3.Connection, table: str, column: str) -> bool:
+        rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        return any(str(row["name"]) == column for row in rows)
+
+    def _ensure_column(
+        self,
+        conn: sqlite3.Connection,
+        table: str,
+        column: str,
+        ddl_type: str,
+    ) -> None:
+        if self._column_exists(conn, table, column):
+            return
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}")
+
     def initialize(self) -> None:
         schema = """
         CREATE TABLE IF NOT EXISTS nodes (
@@ -71,7 +86,9 @@ class Storage:
             ping_max_ms REAL,
             ping_packet_loss_pct REAL,
             derp_region TEXT,
+            cur_addr_endpoint TEXT,
             peer_relay_endpoint TEXT,
+            relay_hint TEXT,
             bytes_direct_delta INTEGER NOT NULL,
             bytes_relay_delta INTEGER NOT NULL,
             bytes_derp_delta INTEGER NOT NULL,
@@ -101,6 +118,8 @@ class Storage:
         """
         with self._connect() as conn:
             conn.executescript(schema)
+            self._ensure_column(conn, "checks", "cur_addr_endpoint", "TEXT")
+            self._ensure_column(conn, "checks", "relay_hint", "TEXT")
             conn.commit()
 
     def upsert_nodes(self, nodes: list[NodeConfig]) -> None:
@@ -131,9 +150,9 @@ class Storage:
                 INSERT INTO checks (
                     node_ip, checked_at, state, confidence, approach1_state, approach2_state,
                     ping_state, ping_min_ms, ping_avg_ms, ping_max_ms, ping_packet_loss_pct,
-                    derp_region, peer_relay_endpoint, bytes_direct_delta, bytes_relay_delta,
-                    bytes_derp_delta, raw_status_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    derp_region, cur_addr_endpoint, peer_relay_endpoint, relay_hint,
+                    bytes_direct_delta, bytes_relay_delta, bytes_derp_delta, raw_status_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     check.node_ip,
@@ -148,7 +167,9 @@ class Storage:
                     check.ping_max_ms,
                     check.ping_packet_loss_pct,
                     check.derp_region,
+                    check.cur_addr_endpoint,
                     check.peer_relay_endpoint,
+                    check.relay_hint,
                     check.bytes_direct_delta,
                     check.bytes_relay_delta,
                     check.bytes_derp_delta,
@@ -254,7 +275,9 @@ class Storage:
             c.confidence,
             c.checked_at,
             c.derp_region,
+            c.cur_addr_endpoint,
             c.peer_relay_endpoint,
+            c.relay_hint,
             c.ping_avg_ms
         FROM nodes n
         LEFT JOIN checks c ON c.id = (
@@ -282,7 +305,9 @@ class Storage:
                         "confidence": row["confidence"] or "low",
                         "last_checked": row["checked_at"],
                         "derp_region": row["derp_region"],
+                        "cur_addr_endpoint": row["cur_addr_endpoint"],
                         "peer_relay_endpoint": row["peer_relay_endpoint"],
+                        "relay_hint": row["relay_hint"],
                         "ping_avg_ms": row["ping_avg_ms"],
                         "uptime_7d_pct": uptime["uptime_pct"],
                     }
@@ -296,7 +321,7 @@ class Storage:
         SELECT
             id, node_ip, checked_at, state, confidence, approach1_state, approach2_state,
             ping_state, ping_min_ms, ping_avg_ms, ping_max_ms, ping_packet_loss_pct,
-            derp_region, peer_relay_endpoint,
+            derp_region, cur_addr_endpoint, peer_relay_endpoint, relay_hint,
             bytes_direct_delta, bytes_relay_delta, bytes_derp_delta
         FROM checks
         WHERE node_ip = ?
@@ -378,6 +403,7 @@ class Storage:
             totals.get(NodeState.DIRECT.value, 0)
             + totals.get(NodeState.PEER_RELAY.value, 0)
             + totals.get(NodeState.DERP.value, 0)
+            + totals.get(NodeState.INACTIVE.value, 0)
         )
         uptime_pct = round((online_count / total_count) * 100.0, 2)
 
@@ -393,6 +419,7 @@ class Storage:
         offline = 0
         derp = 0
         direct = 0
+        inactive = 0
         online = 0
         last_check_time: str | None = None
 
@@ -408,10 +435,13 @@ class Storage:
                 derp += 1
             if state == NodeState.DIRECT.value:
                 direct += 1
+            if state == NodeState.INACTIVE.value:
+                inactive += 1
             if state in {
                 NodeState.DIRECT.value,
                 NodeState.DERP.value,
                 NodeState.PEER_RELAY.value,
+                NodeState.INACTIVE.value,
             }:
                 online += 1
 
@@ -421,5 +451,6 @@ class Storage:
             "nodes_offline": offline,
             "nodes_on_derp": derp,
             "nodes_on_direct": direct,
+            "nodes_inactive": inactive,
             "last_check_time": last_check_time,
         }

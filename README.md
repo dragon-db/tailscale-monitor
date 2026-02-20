@@ -5,11 +5,12 @@ FastAPI-based monitor for multiple Tailscale nodes.
 ## Features
 
 - Multi-node monitoring with independent check intervals
-- State detection: DIRECT, PEER_RELAY, DERP, OFFLINE, UNKNOWN
+- State detection: DIRECT, SPEED RELAY, RELAY (DERP), INACTIVE, OFFLINE
 - SQLite persistence for checks and transitions
 - Discord + Ntfy notifications on state transitions
 - Web dashboard + JSON API
 - Manual out-of-schedule check triggers
+- Manual per-node ping test (`POST /api/ping/{ip}` with 5 packets) and UI action
 - Discord test trigger from UI (`Test Discord`) and API (`POST /api/test/discord`)
 
 ## Requirements
@@ -23,17 +24,17 @@ FastAPI-based monitor for multiple Tailscale nodes.
 The monitor treats `tailscale status --json` as the primary source of truth for
 per-peer routing state.
 
-Decision order (highest priority first):
+Decision order:
 
-1. `Online == false` or peer missing from JSON -> `OFFLINE`
-2. `PeerRelay != ""` -> `PEER_RELAY` (shown in UI as **HIGH SPEED RELAY**)
-3. `CurAddr != ""` -> `DIRECT` (even if `Relay` is also present)
-4. `PeerRelay == ""` and `CurAddr == ""` -> `DERP suspected`, confirm with `tailscale ping`
-5. if ping says `via DERP (...)` -> `DERP`
-6. otherwise -> `UNKNOWN`
+1. peer missing from JSON or `Online == false` -> `OFFLINE`
+2. `Online == true` and `Active == false` -> `INACTIVE`
+3. for active peers:
+   - `CurAddr != ""` -> `DIRECT`
+   - else `PeerRelay != ""` -> `PEER_RELAY` (shown in UI as **SPEED RELAY**)
+   - else -> DERP-suspect and confirm with `tailscale ping` (`via DERP (...)` -> `DERP`)
 
 Important:
-- `Relay` alone is not treated as active DERP proof; it is used as a DERP-suspect hint and validated with ping.
+- `Relay` alone is treated as a DERP hint/suspect and is validated with ping when possible.
 - `/metrics` (`http://100.100.100.100/metrics`) is backseated and does not drive
   node routing classification.
 - Optional stale fallback: if peer is stale for >= 10 minutes and inactive
@@ -66,7 +67,7 @@ jq --arg ip "$IP" -r '
 
 # 4) Inspect latest app decisions stored in SQLite
 sqlite3 data/monitor.db "
-select checked_at,state,approach2_state,ping_state,derp_region,peer_relay_endpoint
+select checked_at,state,approach2_state,ping_state,derp_region,cur_addr_endpoint,peer_relay_endpoint,relay_hint
 from checks
 where node_ip='$IP'
 order by checked_at desc
@@ -128,16 +129,19 @@ Notifier startup log:
    - No notifier configured logs warning and app still runs.
 
 2. Status mapping
-   - Node with `PeerRelay` resolves `PEER_RELAY` (HIGH SPEED RELAY).
-   - Node with `CurAddr` resolves `DIRECT` even when `Relay` is also present.
-   - Node with empty `CurAddr` and empty `PeerRelay` becomes DERP-suspect and is confirmed via ping output.
-   - `via DERP (...)` in ping output confirms `DERP`.
+   - Node with `Online=false` or missing peer resolves `OFFLINE`.
+   - Node with `Online=true` and `Active=false` resolves `INACTIVE`.
+   - Active node with `CurAddr` resolves `DIRECT`.
+   - Active node with empty `CurAddr` and populated `PeerRelay` resolves `PEER_RELAY` (SPEED RELAY).
+   - Active node with empty `CurAddr` and empty `PeerRelay` is DERP-suspect and is confirmed via ping output.
+   - `via DERP (...)` in ping output confirms `DERP` (shown as RELAY (DERP)).
    - Missing/offline peer resolves `OFFLINE`.
    - Invalid status output resolves `UNKNOWN` with low confidence.
 
 3. Transition behavior
    - `DIRECT -> DERP`, `DERP -> DIRECT`, `OFFLINE -> DIRECT`, `DIRECT -> OFFLINE`
      create transition rows and trigger notifications.
+   - `INACTIVE -> OFFLINE` triggers notification; transitions into/out of `INACTIVE` otherwise stay non-notifying.
    - Cooldown suppresses duplicate transition notifications.
 
 4. Trigger endpoint
@@ -148,3 +152,4 @@ Notifier startup log:
    - `/` loads cards and event log.
    - Auto-refresh updates every 30 seconds.
    - `Check Now` triggers node check without page reload.
+   - `Ping Test (5)` shows per-pong route/latency summary and raw output panel.

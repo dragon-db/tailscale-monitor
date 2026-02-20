@@ -1,10 +1,11 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import asyncio
 import logging
+from collections import Counter
 from datetime import datetime, timezone
 
-from .detectors.ping import run_ping_check
+from .detectors.ping import parse_ping_samples, run_ping_check
 from .detectors.status import get_node_status
 from .models import (
     AppConfig,
@@ -43,18 +44,10 @@ class MonitorService:
         )
 
         final_state = status_result.state
-        derp_suspected = (
-            status_result.state == NodeState.UNKNOWN
-            and status_result.online
-            and bool(status_result.derp_region)
-        )
+        derp_suspected = status_result.state == NodeState.DERP and status_result.online
 
         ping_result = PingResult()
-        if (
-            self.config.settings.ping_on_derp_suspect
-            and status_result.online
-            and (final_state == NodeState.DERP or derp_suspected)
-        ):
+        if self.config.settings.ping_on_derp_suspect and derp_suspected:
             ping_result = await run_ping_check(
                 tailscale_binary=self.config.settings.tailscale_binary,
                 tailscale_socket=self.config.settings.tailscale_socket,
@@ -69,11 +62,7 @@ class MonitorService:
             if ping_result.state in {NodeState.DERP, NodeState.DIRECT, NodeState.PEER_RELAY}:
                 final_state = ping_result.state
             elif ping_result.error and "direct connection not established" in ping_result.error.lower():
-                # Tailscale reports this when direct path cannot be established; for DERP-suspected
-                # peers this is a strong indicator traffic is relayed via DERP.
                 final_state = NodeState.DERP
-            else:
-                final_state = NodeState.UNKNOWN
 
         confidence = self._resolve_confidence(
             final_state=final_state,
@@ -83,7 +72,7 @@ class MonitorService:
 
         resolved_derp_region = None
         if final_state == NodeState.DERP:
-            resolved_derp_region = status_result.derp_region or ping_result.derp_region
+            resolved_derp_region = ping_result.derp_region or status_result.derp_region
 
         check = CheckResult(
             node_ip=node.ip,
@@ -100,7 +89,9 @@ class MonitorService:
             ping_max_ms=ping_result.max_ms,
             ping_packet_loss_pct=ping_result.packet_loss_pct,
             derp_region=resolved_derp_region,
+            cur_addr_endpoint=status_result.cur_addr_endpoint,
             peer_relay_endpoint=status_result.peer_relay_endpoint,
+            relay_hint=status_result.relay_hint,
             bytes_direct_delta=0,
             bytes_relay_delta=0,
             bytes_derp_delta=0,
@@ -126,9 +117,8 @@ class MonitorService:
         if final_state == NodeState.UNKNOWN:
             return Confidence.LOW
 
-        if status_error and "derp suspected pending ping confirmation" in status_error.lower():
-            if ping_result.state is None or ping_result.error:
-                return Confidence.LOW
+        if final_state == NodeState.INACTIVE:
+            return Confidence.HIGH
 
         if status_error and "stale and inactive" in status_error.lower():
             return Confidence.LOW
@@ -139,11 +129,17 @@ class MonitorService:
         if final_state in {NodeState.DIRECT, NodeState.PEER_RELAY}:
             return Confidence.HIGH
 
-        if final_state == NodeState.DERP and ping_result.error:
-            return Confidence.MEDIUM
-        if final_state == NodeState.DERP and ping_result.state == NodeState.DERP:
-            return Confidence.HIGH
-        if final_state == NodeState.DERP and ping_result.state in {NodeState.DIRECT, NodeState.PEER_RELAY}:
+        if final_state == NodeState.DERP:
+            if ping_result.state == NodeState.DERP:
+                return Confidence.HIGH
+            if ping_result.error and "direct connection not established" in ping_result.error.lower():
+                return Confidence.MEDIUM
+            if ping_result.error:
+                return Confidence.MEDIUM
+            if ping_result.state in {NodeState.DIRECT, NodeState.PEER_RELAY}:
+                return Confidence.MEDIUM
+            if status_error and "pending ping confirmation" in status_error.lower():
+                return Confidence.MEDIUM
             return Confidence.MEDIUM
 
         return Confidence.MEDIUM
@@ -233,8 +229,16 @@ class MonitorService:
 
         if current == NodeState.OFFLINE:
             return True
-        if previous == NodeState.OFFLINE:
+
+        if previous == NodeState.OFFLINE and current in {
+            NodeState.DIRECT,
+            NodeState.PEER_RELAY,
+            NodeState.DERP,
+        }:
             return True
+
+        if previous == NodeState.INACTIVE or current == NodeState.INACTIVE:
+            return False
 
         pair = {previous, current}
         return pair in [
@@ -280,3 +284,70 @@ class MonitorService:
         if region_change:
             return f"DERP region changed: {old_region} -> {new_region} ({trigger} check)"
         return f"No transition ({trigger} check)"
+
+    async def run_manual_ping(self, node: NodeConfig, count: int = 5) -> dict[str, object]:
+        status_result = await get_node_status(
+            tailscale_binary=self.config.settings.tailscale_binary,
+            tailscale_socket=self.config.settings.tailscale_socket,
+            ip=node.ip,
+            offline_threshold_minutes=self.config.settings.offline_threshold_minutes,
+        )
+
+        payload: dict[str, object] = {
+            "node_ip": node.ip,
+            "node_label": node.label,
+            "count": count,
+            "status_state": status_result.state.value,
+            "status_online": status_result.online,
+            "status_error": status_result.error,
+            "cur_addr_endpoint": status_result.cur_addr_endpoint,
+            "peer_relay_endpoint": status_result.peer_relay_endpoint,
+            "relay_hint": status_result.relay_hint,
+        }
+
+        if status_result.state == NodeState.OFFLINE:
+            payload.update(
+                {
+                    "ok": False,
+                    "ping_state": None,
+                    "min_ms": None,
+                    "avg_ms": None,
+                    "max_ms": None,
+                    "packet_loss_pct": None,
+                    "derp_region": None,
+                    "samples": [],
+                    "route_counts": {},
+                    "raw_output": None,
+                    "error": "Node is OFFLINE; ping test skipped",
+                }
+            )
+            return payload
+
+        timeout_seconds = max(self.config.settings.ping_timeout_seconds, 15)
+        ping_result = await run_ping_check(
+            tailscale_binary=self.config.settings.tailscale_binary,
+            tailscale_socket=self.config.settings.tailscale_socket,
+            ip=node.ip,
+            count=count,
+            timeout_seconds=timeout_seconds,
+        )
+        samples = parse_ping_samples(ping_result.raw_output or "")
+        route_counts = dict(Counter(str(sample["state"]) for sample in samples))
+        derp_region = ping_result.derp_region or status_result.derp_region
+
+        payload.update(
+            {
+                "ok": ping_result.state is not None and len(samples) > 0,
+                "ping_state": ping_result.state.value if ping_result.state else None,
+                "min_ms": ping_result.min_ms,
+                "avg_ms": ping_result.avg_ms,
+                "max_ms": ping_result.max_ms,
+                "packet_loss_pct": ping_result.packet_loss_pct,
+                "derp_region": derp_region,
+                "samples": samples,
+                "route_counts": route_counts,
+                "raw_output": ping_result.raw_output,
+                "error": ping_result.error,
+            }
+        )
+        return payload

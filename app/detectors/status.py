@@ -96,6 +96,21 @@ async def get_node_status(
     cur_addr = _non_empty(peer.get("CurAddr"))
     relay = _non_empty(peer.get("Relay"))
     active_field = bool(peer.get("Active", False))
+    online = online_field is not False
+
+    if online and not active_field:
+        return StatusDetection(
+            state=NodeState.INACTIVE,
+            online=True,
+            derp_region=relay,
+            cur_addr_endpoint=cur_addr,
+            peer_relay_endpoint=peer_relay,
+            relay_hint=relay,
+            raw_peer=peer,
+            raw_status_json=raw_status,
+            error="Peer is online but inactive (no active connection established)",
+        )
+
     last_seen = _parse_last_seen(peer.get("LastSeen"))
     stale_grace_minutes = max(10, offline_threshold_minutes)
     if last_seen is not None:
@@ -114,38 +129,36 @@ async def get_node_status(
                     ),
                 )
 
-    if peer_relay:
-        return StatusDetection(
-            state=NodeState.PEER_RELAY,
-            online=online_field is not False,
-            peer_relay_endpoint=str(peer_relay),
-            raw_peer=peer,
-            raw_status_json=raw_status,
-        )
-
     if cur_addr:
         return StatusDetection(
             state=NodeState.DIRECT,
-            online=online_field is not False,
+            online=online,
+            cur_addr_endpoint=str(cur_addr),
+            peer_relay_endpoint=str(peer_relay) if peer_relay else None,
+            relay_hint=relay,
             raw_peer=peer,
             raw_status_json=raw_status,
         )
 
-    if relay:
-        # Relay alone is a DERP-suspect signal, not proof of active DERP data path.
+    if peer_relay:
         return StatusDetection(
-            state=NodeState.UNKNOWN,
-            online=online_field is not False,
-            derp_region=str(relay),
+            state=NodeState.PEER_RELAY,
+            online=online,
+            cur_addr_endpoint=str(cur_addr) if cur_addr else None,
+            peer_relay_endpoint=str(peer_relay),
+            relay_hint=relay,
             raw_peer=peer,
             raw_status_json=raw_status,
-            error="Relay present but no CurAddr/PeerRelay; DERP suspected pending ping confirmation",
         )
 
     return StatusDetection(
-        state=NodeState.UNKNOWN,
-        online=online_field is not False,
+        state=NodeState.DERP,
+        online=online,
+        derp_region=relay,
+        relay_hint=relay,
+        cur_addr_endpoint=str(cur_addr) if cur_addr else None,
+        peer_relay_endpoint=str(peer_relay) if peer_relay else None,
         raw_peer=peer,
         raw_status_json=raw_status,
-        error="Could not determine path from peer data",
+        error="No CurAddr/PeerRelay active path found; DERP suspected pending ping confirmation",
     )

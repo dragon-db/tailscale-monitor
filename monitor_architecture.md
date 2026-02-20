@@ -2,17 +2,18 @@
 
 Build a Python 3.11+ application called `tailscale-monitor`. It monitors multiple Tailscale nodes for connection type changes (Direct, Peer Relay, DERP) and offline state, sends rich notifications, and serves a simple web dashboard. It runs as a Docker container using `network_mode: host` with the host's tailscale socket bind-mounted.
 
-### Implementation Update (2026-02-19)
+### Implementation Update (2026-02-20)
 
 The active implementation now uses this routing decision order from
 `tailscale --socket ... status --json`:
 
-1. `PeerRelay != ""` -> `PEER_RELAY`
-2. `CurAddr != ""` -> `DIRECT` (even if `Relay` is also set)
-3. `PeerRelay == ""` and `CurAddr == ""` -> `DERP` suspected, confirm using `tailscale ping`
-4. ping contains `via DERP (...)` -> `DERP`; otherwise keep `UNKNOWN`
-
-Offline still has higher priority when peer is missing or `Online == false`.
+1. peer missing or `Online == false` -> `OFFLINE`
+2. `Online == true` and `Active == false` -> `INACTIVE`
+3. active peers:
+   - `CurAddr != ""` -> `DIRECT`
+   - else `PeerRelay != ""` -> `PEER_RELAY` (UI label: **SPEED RELAY**)
+   - else DERP-suspect; confirm using `tailscale ping`
+4. ping contains `via DERP (...)` -> `DERP` (UI label: **RELAY (DERP)**)
 
 Metrics endpoint (`http://100.100.100.100/metrics`) is intentionally backseated
 for route classification because it is host-level aggregate telemetry, not
@@ -106,10 +107,12 @@ CURRENT IMPLEMENTATION OVERRIDE (V1):
 - `/metrics` is not used to decide a node's DIRECT/DERP/PEER_RELAY state.
 - Ping is used as optional DERP confirmation only.
 - Effective path logic in production:
-  - `PeerRelay != ""` => `PEER_RELAY` (high-speed relay)
-  - else `CurAddr != ""` => `DIRECT`
-  - else `PeerRelay == ""` and `CurAddr == ""` => DERP suspected; confirm with ping
-  - ping output `via DERP (...)` => `DERP`, otherwise keep `UNKNOWN`
+  - peer missing or `Online == false` => `OFFLINE`
+  - `Online == true` and `Active == false` => `INACTIVE`
+  - active peer with `CurAddr != ""` => `DIRECT`
+  - active peer with empty `CurAddr` and `PeerRelay != ""` => `PEER_RELAY` (SPEED RELAY)
+  - active peer with both empty => DERP suspected; confirm with ping
+  - ping output `via DERP (...)` => `DERP` (RELAY (DERP))
 - `Relay` by itself is treated as a hint (home DERP/signaling), not active-path proof.
 - If this override conflicts with older details below, this override wins.
 
@@ -202,8 +205,9 @@ Send to DISCORD_WEBHOOK_URL using a JSON embed payload.
 Embed color scheme:
   OFFLINE → Red (#FF0000) / 16711680
   DIRECT → Green (#00C853) / 50259
-  PEER_RELAY → Yellow (#FFD600) / 16766464
-  DERP → Orange (#FF6D00) / 16740608
+  PEER_RELAY -> Yellow (#FFD600) / 16766464
+  DERP -> Orange (#FF6D00) / 16740608
+  INACTIVE -> Blue (#5865F2) / 5793266
   ONLINE RECOVERY → Bright Green (#76FF03) / 7798531
 
 Embed structure:
@@ -324,7 +328,8 @@ API ENDPOINTS:
 GET /api/nodes
   Returns current state for all configured nodes.
   Response: list of {ip, label, tags, current_state, confidence, last_checked,
-                     derp_region, peer_relay_endpoint, ping_avg_ms, uptime_7d_pct}
+                     derp_region, cur_addr_endpoint, peer_relay_endpoint,
+                     relay_hint, ping_avg_ms, uptime_7d_pct}
 
 GET /api/nodes/{ip}/history?limit=100
   Returns recent check history for one node.
@@ -333,12 +338,16 @@ GET /api/transitions?limit=50
   Returns recent state transitions across all nodes (the "event log").
 
 GET /api/stats
-  Returns summary: total nodes, nodes online, nodes offline, nodes on DERP,
-                   nodes on direct, last_check_time.
+  Returns summary: total nodes, nodes online, nodes inactive, nodes offline,
+                   nodes on DERP, nodes on direct, last_check_time.
 
 POST /api/check/{ip}  (or /api/check/all)
   Triggers an immediate out-of-schedule check for a node (or all nodes).
   Returns 202 Accepted. The check runs async.
+
+POST /api/ping/{ip}
+  Runs `tailscale ping -c 5` for one configured node and returns parsed
+  route/latency/packet-loss details plus raw output.
 
 GET /health
   Returns 200 OK with {"status": "ok"} — for Docker healthcheck.
@@ -356,9 +365,10 @@ The UI must be clean, responsive, and work well on mobile too.
 LAYOUT:
   Header bar: App name "Tailscale Monitor", last refresh time, manual refresh button.
   
-  Summary strip (top): 4 stat cards side by side:
+  Summary strip (top): 5 stat cards side by side:
     - Total Nodes
     - Online (green)
+    - Inactive (blue)
     - Offline (red)
     - On DERP (orange)
   
@@ -386,8 +396,9 @@ LAYOUT:
 
 VISUAL STATE REFERENCE:
   DIRECT → green text + green dot
-  PEER_RELAY → yellow text + yellow dot
-  DERP → orange text + orange dot
+  PEER_RELAY -> Yellow (#FFD600) / 16766464
+  DERP -> Orange (#FF6D00) / 16740608
+  INACTIVE -> Blue (#5865F2) / 5793266
   OFFLINE → red text + red dot + pulsing animation
   UNKNOWN → gray text + gray dot
 ```
@@ -464,3 +475,5 @@ REQUIREMENTS.TXT (minimum):
 ```
 
 ---
+
+

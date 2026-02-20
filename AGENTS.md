@@ -12,23 +12,25 @@ This file is the persistent context handoff for coding agents working on `tailsc
 
 - Stack: Python 3.12+, FastAPI, SQLite, httpx, PyYAML.
 - Runtime mode (V1): local/venv (no Docker deliverables yet).
-- Purpose: monitor configured Tailscale peers and detect transitions across `DIRECT`, `PEER_RELAY`, `DERP`, `OFFLINE`, `UNKNOWN`.
+- Purpose: monitor configured Tailscale peers and detect transitions across `DIRECT`, `PEER_RELAY`, `DERP`, `INACTIVE`, `OFFLINE` (with `UNKNOWN` fallback on detector errors).
 
 ## Current Architecture
 
 - API/UI:
-  - `app/api.py` exposes `/api/*`, `/health`, and serves `app/web/*`.
+  - `app/api.py` exposes `/api/*` (including manual ping endpoint `POST /api/ping/{ip}`), `/health`, and serves `app/web/*`.
   - FastAPI docs available at `/docs`.
 - App bootstrap:
   - `app/main.py` loads config, initializes storage, notifier manager, monitor service, and scheduler.
 - Monitor engine:
   - `app/monitor.py` runs status-based detection, optional ping on DERP, confidence resolution, transition logic, notification dispatch.
+  - Includes on-demand manual ping test helper (`count=5`) used by API/UI.
   - Metrics are currently backseated and do not decide per-node routing state.
 - Scheduler:
   - `app/scheduler.py` runs per-node loops with interval overrides and manual trigger dedupe.
 - Detectors:
   - `app/detectors/status.py` parses `tailscale status --json` with routing priority:
-    `PeerRelay` -> `CurAddr` -> `DERP-suspect` when both are empty.
+    `Online=false/missing` -> `OFFLINE`, `Online=true + Active=false` -> `INACTIVE`,
+    then active peers: `CurAddr` -> `PeerRelay` -> `DERP-suspect` when both are empty.
   - DERP is confirmed by `tailscale ping` output (`via DERP (...)`), not by `Relay` field alone.
   - `app/detectors/metrics.py` remains available but is not used for active route classification.
   - `app/detectors/ping.py` parses `tailscale ping` output.
@@ -64,7 +66,7 @@ This file is the persistent context handoff for coding agents working on `tailsc
 ## Data Model Summary
 
 - `nodes`: configured monitored peers
-- `checks`: per-check observations (metrics fields currently persisted as zero/N/A)
+- `checks`: per-check observations (includes path endpoint metadata `cur_addr_endpoint`, `peer_relay_endpoint`, `relay_hint`; metrics fields currently persisted as zero/N/A)
 - `transitions`: state changes and notification metadata
 
 ## Known Decisions (Locked)
@@ -89,3 +91,4 @@ This file is the persistent context handoff for coding agents working on `tailsc
 - 2026-02-19: Added Discord delivery observability and manual test workflow. App now logs notifier channel enablement at startup, exposes `POST /api/test/discord` for explicit webhook testing, and includes a dashboard `Test Discord` button with inline result messages. Impacted: `app/notifiers/manager.py`, `app/api.py`, `app/main.py`, `app/web/index.html`, `app/web/app.js`, `README.md`, `AGENTS.md`.
 - 2026-02-19: Fixed `.env` secret resolution reliability for notifier config. `load_dotenv` now uses `override=True` and BOM-safe `utf-8-sig` encoding, plus startup logs explicitly show which notifier secrets are resolved (set/missing). This prevents inherited empty env vars or BOM-prefixed files from causing Discord to appear disabled. Impacted: `app/config.py`, `AGENTS.md`.
 - 2026-02-19: Updated runtime log handling so each app `start` (and therefore `restart`) clears `.run/tailscale-monitor.log` before process launch, ensuring a clean log per session. Updated run workflow docs accordingly. Impacted: `run.sh`, `README.md`, `AGENTS.md`.
+- 2026-02-20: Added INACTIVE-aware classification and expanded route metadata. Status flow now prioritizes OFFLINE, then INACTIVE (`Online=true` + `Active=false`), then active-path resolution (`CurAddr` => DIRECT, `PeerRelay` => SPEED RELAY, else DERP-suspect confirmed by ping). Added manual ping API/UI (`POST /api/ping/{ip}`, fixed count=5), persisted direct/relay hint fields in checks, and limited INACTIVE notifications to OFFLINE transitions. Impacted: `app/models.py`, `app/detectors/status.py`, `app/detectors/ping.py`, `app/monitor.py`, `app/storage.py`, `app/api.py`, `app/main.py`, `app/notifiers/manager.py`, `app/web/index.html`, `app/web/app.js`, `README.md`, `monitor_architecture.md`, `AGENTS.md`.

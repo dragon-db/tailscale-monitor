@@ -17,8 +17,21 @@ COLOR_BY_STATE = {
     NodeState.DIRECT: 51411,
     NodeState.PEER_RELAY: 16766464,
     NodeState.DERP: 16740608,
+    NodeState.INACTIVE: 5793266,
     NodeState.UNKNOWN: 8421504,
 }
+
+
+def _state_label(state: NodeState) -> str:
+    mapping = {
+        NodeState.DIRECT: "DIRECT",
+        NodeState.PEER_RELAY: "SPEED RELAY",
+        NodeState.DERP: "RELAY (DERP)",
+        NodeState.INACTIVE: "INACTIVE",
+        NodeState.OFFLINE: "OFFLINE",
+        NodeState.UNKNOWN: "UNKNOWN",
+    }
+    return mapping.get(state, state.value)
 
 
 def _fmt_duration(seconds: int | None) -> str:
@@ -38,8 +51,10 @@ def _title(node_label: str, previous: NodeState, current: NodeState) -> str:
         return f"Node Offline: {node_label}"
     if previous == NodeState.OFFLINE and current != NodeState.OFFLINE:
         return f"Node Back Online: {node_label}"
+    if current == NodeState.INACTIVE and previous != NodeState.INACTIVE:
+        return f"Node Inactive: {node_label}"
     if current == NodeState.DERP and previous != NodeState.DERP:
-        return f"DERP Fallback: {node_label}"
+        return f"DERP Relay Fallback: {node_label}"
     return f"Connection Changed: {node_label}"
 
 
@@ -48,6 +63,8 @@ def _priority(previous: NodeState, current: NodeState) -> str:
         return "urgent"
     if current == NodeState.DERP:
         return "high"
+    if current == NodeState.INACTIVE:
+        return "low"
     if current == NodeState.PEER_RELAY:
         return "default"
     if previous == NodeState.OFFLINE and current == NodeState.DIRECT:
@@ -153,20 +170,23 @@ class NotifierManager:
                 },
                 {
                     "name": "Previous State",
-                    "value": f"{transition.previous_state.value} for {_fmt_duration(transition.duration_previous_seconds)}",
+                    "value": (
+                        f"{_state_label(transition.previous_state)} "
+                        f"for {_fmt_duration(transition.duration_previous_seconds)}"
+                    ),
                     "inline": True,
                 },
                 {
                     "name": "Current State",
-                    "value": f"{transition.current_state.value} ({check.confidence.value} confidence)",
+                    "value": f"{_state_label(transition.current_state)} ({check.confidence.value} confidence)",
                     "inline": True,
                 },
                 {
                     "name": "Detection",
                     "value": (
-                        f"Status JSON: {check.approach2_state.value if check.approach2_state else 'UNKNOWN'} | "
+                        f"Status JSON: {_state_label(check.approach2_state) if check.approach2_state else 'UNKNOWN'} | "
                         "Metrics: Backseated | "
-                        f"Ping: {check.ping_state.value if check.ping_state else 'N/A'}"
+                        f"Ping: {_state_label(check.ping_state) if check.ping_state else 'N/A'}"
                     ),
                     "inline": False,
                 },
@@ -221,7 +241,7 @@ class NotifierManager:
         assert self._secrets.ntfy_url is not None
         assert self._secrets.ntfy_topic is not None
 
-        title = f"TS: {node.label} -> {check.state.value}"
+        title = f"TS: {node.label} -> {_state_label(check.state)}"
         priority = _priority(transition.previous_state, transition.current_state)
         tags = ["tailscale", check.state.value.lower(), node.label.replace(" ", "-").lower()]
 
@@ -229,13 +249,16 @@ class NotifierManager:
             transition.transition_reason,
             "",
             f"Node: {node.label} ({node.ip})",
-            f"Previous: {transition.previous_state.value} for {_fmt_duration(transition.duration_previous_seconds)}",
-            f"Current: {transition.current_state.value} ({check.confidence.value})",
+            (
+                f"Previous: {_state_label(transition.previous_state)} "
+                f"for {_fmt_duration(transition.duration_previous_seconds)}"
+            ),
+            f"Current: {_state_label(transition.current_state)} ({check.confidence.value})",
             "",
             "Detection:",
-            f"- Status: {check.approach2_state.value if check.approach2_state else 'UNKNOWN'}",
+            f"- Status: {_state_label(check.approach2_state) if check.approach2_state else 'UNKNOWN'}",
             "- Metrics: Backseated",
-            f"- Ping: {check.ping_state.value if check.ping_state else 'Not run'}",
+            f"- Ping: {_state_label(check.ping_state) if check.ping_state else 'Not run'}",
         ]
 
         if check.ping_avg_ms is not None:

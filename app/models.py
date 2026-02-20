@@ -10,6 +10,7 @@ class NodeState(str, Enum):
     DIRECT = "DIRECT"
     PEER_RELAY = "PEER_RELAY"
     DERP = "DERP"
+    INACTIVE = "INACTIVE"
     OFFLINE = "OFFLINE"
     UNKNOWN = "UNKNOWN"
 
@@ -77,7 +78,9 @@ class StatusDetection:
     state: NodeState
     online: bool
     derp_region: str | None = None
+    cur_addr_endpoint: str | None = None
     peer_relay_endpoint: str | None = None
+    relay_hint: str | None = None
     raw_peer: dict[str, Any] | None = None
     raw_status_json: str | None = None
     error: str | None = None
@@ -111,7 +114,9 @@ class CheckResult:
     ping_max_ms: float | None
     ping_packet_loss_pct: float | None
     derp_region: str | None
+    cur_addr_endpoint: str | None
     peer_relay_endpoint: str | None
+    relay_hint: str | None
     bytes_direct_delta: int
     bytes_relay_delta: int
     bytes_derp_delta: int

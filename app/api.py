@@ -8,6 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 
 from .models import AppConfig
+from .monitor import MonitorService
 from .notifiers.manager import NotifierManager
 from .scheduler import MonitorScheduler
 from .storage import Storage
@@ -18,8 +19,10 @@ def create_app(
     storage: Storage,
     scheduler: MonitorScheduler,
     notifier: NotifierManager,
+    monitor_service: MonitorService,
 ) -> FastAPI:
     configured_ips = [node.ip for node in config.nodes]
+    node_by_ip = {node.ip: node for node in config.nodes}
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -36,6 +39,7 @@ def create_app(
     app.state.storage = storage
     app.state.scheduler = scheduler
     app.state.notifier = notifier
+    app.state.monitor_service = monitor_service
 
     @app.get("/health")
     async def health() -> dict:
@@ -68,6 +72,13 @@ def create_app(
         if not scheduler.has_node(ip):
             raise HTTPException(status_code=404, detail=f"Node {ip} is not configured")
         return scheduler.trigger_node(ip)
+
+    @app.post("/api/ping/{ip}")
+    async def post_ping_node(ip: str) -> dict:
+        node = node_by_ip.get(ip)
+        if node is None:
+            raise HTTPException(status_code=404, detail=f"Node {ip} is not configured")
+        return await monitor_service.run_manual_ping(node=node, count=5)
 
     @app.post("/api/test/discord")
     async def post_test_discord() -> dict:

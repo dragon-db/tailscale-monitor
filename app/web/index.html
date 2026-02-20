@@ -22,7 +22,7 @@
     </header>
     <div id="discordTestStatus" class="hidden mb-4 text-sm px-3 py-2 rounded-lg border"></div>
 
-    <section class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6" id="summaryStrip">
+    <section class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6" id="summaryStrip">
       <div class="p-4 rounded-xl bg-slate-900 border border-slate-800">
         <div class="text-slate-400 text-sm">Total Nodes</div>
         <div id="statTotal" class="text-3xl font-semibold">0</div>
@@ -31,12 +31,16 @@
         <div class="text-emerald-300 text-sm">Online</div>
         <div id="statOnline" class="text-3xl font-semibold text-emerald-200">0</div>
       </div>
+      <div class="p-4 rounded-xl bg-sky-950 border border-sky-900">
+        <div class="text-sky-300 text-sm">Inactive</div>
+        <div id="statInactive" class="text-3xl font-semibold text-sky-200">0</div>
+      </div>
       <div class="p-4 rounded-xl bg-red-950 border border-red-900">
         <div class="text-red-300 text-sm">Offline</div>
         <div id="statOffline" class="text-3xl font-semibold text-red-200">0</div>
       </div>
       <div class="p-4 rounded-xl bg-orange-950 border border-orange-900">
-        <div class="text-orange-300 text-sm">On DERP</div>
+        <div class="text-orange-300 text-sm">Relay (DERP)</div>
         <div id="statDerp" class="text-3xl font-semibold text-orange-200">0</div>
       </div>
     </section>
