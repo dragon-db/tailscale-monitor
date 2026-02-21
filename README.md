@@ -5,7 +5,7 @@ FastAPI-based monitor for multiple Tailscale nodes.
 ## Features
 
 - Multi-node monitoring with independent check intervals
-- State detection: DIRECT, SPEED RELAY, RELAY (DERP), INACTIVE, OFFLINE
+- State detection: DIRECT, PEER_RELAY (shown as SPEED RELAY in UI), DERP, INACTIVE, OFFLINE
 - SQLite persistence for checks and transitions
 - Discord + Ntfy notifications on state transitions
 - Web dashboard + JSON API
@@ -18,6 +18,17 @@ FastAPI-based monitor for multiple Tailscale nodes.
 - Python 3.12+
 - Host with `tailscale` CLI installed
 - Access to tailscaled socket (default: `/var/run/tailscale/tailscaled.sock`)
+
+## Runtime Scope (V1)
+
+- Local/venv runtime only (no Docker support in V1).
+
+## Security Notice (No Built-In Auth)
+
+- V1 has no built-in authentication or authorization.
+- Dashboard and API endpoints are unauthenticated by default.
+- The app binds on `0.0.0.0:{web_ui_port}` (default `8080`), so do not expose it directly to the public internet.
+- If access is needed outside a private/trusted network, place it behind an auth-enabled reverse proxy or gateway and apply firewall/IP allow-list rules.
 
 ## Connection Classification Logic
 
@@ -40,43 +51,19 @@ Important:
 - Optional stale fallback: if peer is stale for >= 10 minutes and inactive
   (`Active=false`) while not explicitly `Online=true`, state can be treated as `OFFLINE`.
 
-## Cross-Verification Commands
+## Configuration
 
-Use these commands on the same machine as the monitor:
-
-```bash
-# 1) Raw JSON used by the app
-tailscale --socket /var/run/tailscale/tailscaled.sock status --json > /tmp/ts-status.json
-
-# 2) Show one peer block by Tailscale IP
-IP="100.x.x.x"
-jq --arg ip "$IP" '
-  .Peer
-  | to_entries[]
-  | select((.value.TailscaleIPs // []) | map(split("/")[0]) | index($ip))
-  | .value
-' /tmp/ts-status.json
-
-# 3) Print only routing fields used by detector
-jq --arg ip "$IP" -r '
-  .Peer
-  | to_entries[]
-  | select((.value.TailscaleIPs // []) | map(split("/")[0]) | index($ip))
-  | "Online=\(.value.Online) Active=\(.value.Active) CurAddr=\(.value.CurAddr) Relay=\(.value.Relay) PeerRelay=\(.value.PeerRelay) LastSeen=\(.value.LastSeen)"
-' /tmp/ts-status.json
-
-# 4) Inspect latest app decisions stored in SQLite
-sqlite3 data/monitor.db "
-select checked_at,state,approach2_state,ping_state,derp_region,cur_addr_endpoint,peer_relay_endpoint,relay_hint
-from checks
-where node_ip='$IP'
-order by checked_at desc
-limit 10;
-"
-
-# 5) Explicit DERP confirmation probe for one peer
-tailscale --socket /var/run/tailscale/tailscaled.sock ping -c 5 "$IP"
-```
+- Main config: `config.yaml` (copied from `config.yaml.example`)
+- Secrets only: `.env` (copied from `.env.example`)
+- Required: add at least one node in `config.yaml` under `nodes:`
+- Key defaults:
+  - `check_interval_seconds: 300`
+  - `ping_on_derp_suspect: true`
+  - `ping_count: 3`
+  - `ping_timeout_seconds: 15`
+  - `offline_threshold_minutes: 5`
+  - `web_ui_port: 8080`
+  - `tailscale_socket: /var/run/tailscale/tailscaled.sock`
 
 ## Quick Start (One-Stop Script)
 
@@ -102,8 +89,8 @@ Script behavior:
   - PID: `.run/tailscale-monitor.pid`
   - Logs: `.run/tailscale-monitor.log`
 
-Dashboard: `http://localhost:8080`
-Docs: `http://localhost:8080/docs`
+Dashboard: `http://localhost:{web_ui_port}` (default `http://localhost:8080`)
+API Docs: `http://localhost:{web_ui_port}/docs` (default `http://localhost:8080/docs`)
 
 Notifier startup log:
 - On boot, the app logs configured channels with:
